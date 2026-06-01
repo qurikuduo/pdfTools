@@ -1,0 +1,20 @@
+{
+  "pdfName": "multestnew.pdf",
+  "pageCount": 4,
+  "chunkSize": 5,
+  "chunks": [
+    {
+      "chunkId": 0,
+      "startPage": 0,
+      "endPage": 4,
+      "status": "completed",
+      "imageFiles": [
+        "chunk0000_53f0203bdf1673069ad7dd66b61e46c0c905645677cdf8d6538fd8887106f2f4.jpg",
+        "chunk0000_d528a8ad78875471a0ced822d2a21590cb23120ba39a622f22a014261b58039c.jpg"
+      ]
+    }
+  ],
+  "pdfComplete": true,
+  "mergeComplete": true,
+  "lastUpdated": "2026-06-01T11:16:25.666Z"
+}
