@@ -269,6 +269,14 @@ raw_extracted/{name}_result/images/       -- images referenced by wiki pages
 - Sources must link to: `[[raw_extracted/{name}|{name}.ext]]`
 - Never reference `staging/` paths in any wiki page
 
+**After verifying the copy, delete the staging output for that file:**
+```powershell
+Remove-Item -Recurse -Force "staging\{name}_result"
+Remove-Item -Force "staging\{name}.md"
+```
+> **Why:** Obsidian's Graph View indexes all `.md` files in the vault, including the per-chunk files inside `staging/{name}_result/markdowns/`. Leaving them in place creates dozens of orphan nodes with no wiki connections. Deleting the staging output keeps the graph clean.
+> The checkpoint file `staging/pdfjobs/{name}.json` should be **kept** — it enables resume if reprocessing is ever needed.
+
 ---
 
 # Wiki Integrity Check
@@ -350,6 +358,11 @@ When the user says "I updated a document", "我更新了文档", "请更新 wiki
    Copy-Item "staging\{name}.md" "raw_extracted\{name}.md" -Force
    Copy-Item -Recurse -Force "staging\{name}_result\images\*" "raw_extracted\{name}_result\images\"
    ```
+   Then verify both `raw_extracted/{name}.md` and `raw_extracted/{name}_result/images/` exist, and delete the staging output:
+   ```powershell
+   Remove-Item -Recurse -Force "staging\{name}_result"
+   Remove-Item -Force "staging\{name}.md"
+   ```
 6. Read `raw_extracted/{filename}.md` in sections (respect Context Budget Rules)
 7. Synthesize or update wiki pages from the content
 8. Update `wiki/index.md`
@@ -377,6 +390,11 @@ When the user adds a new source to `raw/` and asks you to ingest it:
    New-Item -ItemType Directory -Force "raw_extracted\{name}_result\images" | Out-Null
    Copy-Item "staging\{name}.md" "raw_extracted\{name}.md" -Force
    Copy-Item -Recurse -Force "staging\{name}_result\images\*" "raw_extracted\{name}_result\images\"
+   ```
+   Then verify both `raw_extracted/{name}.md` and `raw_extracted/{name}_result/images/` exist, and delete the staging output:
+   ```powershell
+   Remove-Item -Recurse -Force "staging\{name}_result"
+   Remove-Item -Force "staging\{name}.md"
    ```
 5. Read `raw_extracted/{filename}.md` in sections (respect Context Budget Rules)
 6. Identify major concepts, entities, and themes
