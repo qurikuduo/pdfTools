@@ -17,3 +17,5 @@ dist/
 *.tlog
 *.user
 mds
+*logs/
+*log/

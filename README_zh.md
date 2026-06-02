@@ -52,10 +52,10 @@ node ./mineru-client.js raw staging
 执行流程：
 1. 以每块 5 页的方式，将文件提交至 MinerU API
 2. 轮询任务状态，遇到临时错误自动重试
-3. 将每块的 Markdown 保存至 `staging/{pdfname}_result/markdowns/`
-4. 提取图片至 `staging/{pdfname}_result/images/`
-5. 将所有块合并为 `staging/{pdfname}.md`（Obsidian 兼容格式）
-6. 将断点记录写入 `staging/pdfjobs/{pdfname}.json`
+3. 将每块的 Markdown 保存至 `staging/{stem}_result/markdowns/`
+4. 提取图片至 `staging/{stem}_result/images/`
+5. 将所有块合并为 `staging/{stem}.md`（Obsidian 兼容格式）
+6. 将断点记录写入 `staging/pdfjobs/{filename}.json`
 
 ---
 
@@ -127,8 +127,8 @@ MINERU_LANG=en MINERU_CHUNK_SIZE=30 node mineru-client.js raw staging
 
 ```
 output_dir/
-├── {pdfname}.md                        ← 最终合并 Markdown（使用此文件）
-├── {pdfname}_result/
+├── {stem}.md                           ← 最终合并 Markdown（使用此文件）  ({stem} = 不含扩展名的文件名)
+├── {stem}_result/
 │   ├── markdowns/
 │   │   ├── chunk_0000_0019.md          ← 每块的中间 Markdown
 │   │   ├── chunk_0020_0039.md
@@ -137,14 +137,14 @@ output_dir/
 │       ├── chunk0000_figure1.png       ← 提取的图片（带块编号前缀）
 │       └── ...
 └── pdfjobs/
-    └── {pdfname}.json                  ← 断点记录文件
+    └── {filename}.json                 ← 断点记录文件  ({filename} = 含扩展名的完整文件名)
 ```
 
-**最终合并文件 `{pdfname}.md` 是唯一需要用于后续处理的文件。**
+**最终合并文件 `{stem}.md` 是唯一需要用于后续处理的文件。**
 
 合并后 Markdown 中的图片路径为 Obsidian 相对路径，格式如下：
 ```markdown
-![图片: chunk0000_figure1.png]({pdfname}_result/images/chunk0000_figure1.png)
+![图片: chunk0000_figure1.png]({stem}_result/images/chunk0000_figure1.png)
 ```
 
 ---
@@ -153,7 +153,7 @@ output_dir/
 
 本工具具有**幂等性** — 重新运行会自动从中断处恢复，不会重复处理已完成的内容。
 
-每个 PDF 的断点记录保存在 `output_dir/pdfjobs/{pdfname}.json`，记录内容包括：
+每个文件的断点记录保存在 `output_dir/pdfjobs/{filename}.json`（含扩展名的完整文件名），记录内容包括：
 - 每个块的处理状态（`pending` / `completed` / `skipped` / `failed`）
 - PDF 是否已完成全部合并（`mergeComplete: true`）
 

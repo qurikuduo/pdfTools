@@ -14,11 +14,11 @@
  *   checkpoint_start Filename to resume from when input_path is a directory (optional)
  *
  * Output layout (inside output_dir):
- *   {pdfname}.md                          Final merged Markdown
- *   {pdfname}_result/
+ *   {stem}.md                              Final merged Markdown  ({stem} = filename without extension)
+ *   {stem}_result/
  *     markdowns/chunk_XXXX_XXXX.md        Per-chunk intermediate Markdown
  *     images/{prefix}_{imgname}.{ext}     Extracted images (prefixed by chunk id)
- *   pdfjobs/{pdfname}.json                Checkpoint file
+ *   pdfjobs/{filename}.json               Checkpoint file  ({filename} = full filename with extension)
  *
  * Environment variables:
  *   MINERU_API_URL     API base URL          (default: http://192.168.137.135:8000)
@@ -279,7 +279,8 @@ function ensureDir(dir) {
  * Returns an object with the key paths.
  */
 function ensurePdfDirs(outputDir, pdfName) {
-  const resultDir    = path.join(outputDir, pdfName + '_result');
+  const stem         = path.basename(pdfName, path.extname(pdfName));
+  const resultDir    = path.join(outputDir, stem + '_result');
   const markdownsDir = path.join(resultDir, 'markdowns');
   const imagesDir    = path.join(resultDir, 'images');
   const jobsDir      = path.join(outputDir, 'pdfjobs');
@@ -391,12 +392,14 @@ function saveImages(imagesMap, imagesDir, chunkId) {
  * Rewrite all ![alt](imgPath) references in markdown.
  * - Resolves image to local file via nameMap
  * - Ensures alt text is non-empty (falls back to descriptive prefix + filename)
- * - Output path is relative to output_dir: "{pdfName}_result/images/{newName}"
+ * - Output path is relative to output_dir: "{stem}_result/images/{newName}"
+ *   where stem = filename without extension
  *   (correct for the final merged MD file placed directly in output_dir)
  */
 function rewriteImagePaths(markdown, nameMap, pdfName) {
   if (!markdown) return '';
-  const imgDir = `${pdfName}_result/images`;
+  const stem   = path.basename(pdfName, path.extname(pdfName));
+  const imgDir = `${stem}_result/images`;
 
   return markdown.replace(/!\[([^\]]*)\]\(([^)]+)\)/g, (match, alt, imgPath) => {
     const base    = path.basename(imgPath);
@@ -487,7 +490,8 @@ function findOverlapLines(prevLines, nextLines, maxCheck = 30) {
  * Returns the merged Markdown string.
  */
 function mergeChunks(outputDir, pdfName, checkpoint) {
-  const markdownsDir = path.join(outputDir, pdfName + '_result', 'markdowns');
+  const stem         = path.basename(pdfName, path.extname(pdfName));
+  const markdownsDir = path.join(outputDir, stem + '_result', 'markdowns');
   let merged     = '';
   let prevLines  = [];
 

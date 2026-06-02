@@ -52,10 +52,10 @@ node ./mineru-client.js raw staging
 This will:
 1. Submit the file(s) to the MinerU API in 5-page chunks
 2. Poll for completion, retrying automatically on transient errors
-3. Save per-chunk Markdown to `staging/{pdfname}_result/markdowns/`
-4. Extract images to `staging/{pdfname}_result/images/`
-5. Merge all chunks into `staging/{pdfname}.md` (Obsidian-compatible)
-6. Write a checkpoint to `staging/pdfjobs/{pdfname}.json`
+3. Save per-chunk Markdown to `staging/{stem}_result/markdowns/`
+4. Extract images to `staging/{stem}_result/images/`
+5. Merge all chunks into `staging/{stem}.md` (Obsidian-compatible)
+6. Write a checkpoint to `staging/pdfjobs/{filename}.json`
 
 ---
 
@@ -127,8 +127,8 @@ For each PDF, the following files are created inside `output_dir`:
 
 ```
 output_dir/
-├── {pdfname}.md                        ← Final merged Markdown (use this)
-├── {pdfname}_result/
+├── {stem}.md                           ← Final merged Markdown (use this)  ({stem} = filename without extension)
+├── {stem}_result/
 │   ├── markdowns/
 │   │   ├── chunk_0000_0019.md          ← Per-chunk intermediate Markdown
 │   │   ├── chunk_0020_0039.md
@@ -137,14 +137,14 @@ output_dir/
 │       ├── chunk0000_figure1.png       ← Extracted images (chunk-prefixed)
 │       └── ...
 └── pdfjobs/
-    └── {pdfname}.json                  ← Checkpoint file
+    └── {filename}.json                 ← Checkpoint file  ({filename} = full filename with extension)
 ```
 
-**The final merged file `{pdfname}.md` is the only file you need for downstream use.**
+**The final merged file `{stem}.md` is the only file you need for downstream use.**
 
 Image paths in the merged Markdown are Obsidian-relative and non-breaking:
 ```markdown
-![图片: chunk0000_figure1.png]({pdfname}_result/images/chunk0000_figure1.png)
+![图片: chunk0000_figure1.png]({stem}_result/images/chunk0000_figure1.png)
 ```
 
 ---
@@ -153,7 +153,7 @@ Image paths in the merged Markdown are Obsidian-relative and non-breaking:
 
 The tool is **idempotent** — re-running it automatically resumes from where it stopped.
 
-Each PDF gets a checkpoint at `output_dir/pdfjobs/{pdfname}.json` that tracks:
+Each file gets a checkpoint at `output_dir/pdfjobs/{filename}.json` (full filename with extension) that tracks:
 - Status of every chunk (`pending` / `completed` / `skipped` / `failed`)
 - Whether the full PDF merge is complete (`mergeComplete: true`)
 

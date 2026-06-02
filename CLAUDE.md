@@ -248,14 +248,37 @@ Never read from `staging/{name}_result/markdowns/` — use only the merged `stag
 
 # Post-Extraction Copy Rules
 
-After `node ./mineru-client.js ...` completes successfully (exit code 0, output ends with `✓`), copy the output to `raw_extracted/` using PowerShell:
+`{name}` throughout = **file stem without extension** (e.g. `multestnew` for `multestnew.pdf`, `报告` for `报告.docx`).
 
-```powershell
-# Replace {name} with the file stem (filename without extension)
-New-Item -ItemType Directory -Force "raw_extracted\{name}_result\images" | Out-Null
-Copy-Item "staging\{name}.md" "raw_extracted\{name}.md" -Force
-Copy-Item -Recurse -Force "staging\{name}_result\images\*" "raw_extracted\{name}_result\images\"
+After `node ./mineru-client.js ...` completes successfully (exit code 0, output ends with `✓`), follow these **4 steps in order**.
+
+> ⚠️ **NEVER chain copy and delete in a single PowerShell command.** If the copy fails, the delete will still execute and all staging data will be permanently lost.
+
+**Step 1 — Create destination directories:**
+```bash
+mkdir -p "raw_extracted/{name}_result/images"
 ```
+
+**Step 2 — Copy files:**
+```bash
+cp -f "staging/{name}.md" "raw_extracted/{name}.md"
+cp -rf "staging/{name}_result/images/"* "raw_extracted/{name}_result/images/"
+```
+
+**Step 3 — Verify the copy succeeded** before touching staging:
+```bash
+test -f "raw_extracted/{name}.md" && echo "md OK" || echo "md MISSING"
+ls "raw_extracted/{name}_result/images/" 2>/dev/null | wc -l   # must be >= 0
+```
+If `md MISSING` appears, **stop immediately** — do not delete staging. Fix the path and re-run Steps 1–2.
+
+**Step 4 — Delete the staging output** (only after Step 3 confirms success):
+```bash
+rm -rf "staging/{name}_result"
+rm -f "staging/{name}.md"
+```
+> **Why:** Obsidian's Graph View indexes all `.md` files in the vault, including the per-chunk files inside `staging/{name}_result/markdowns/`. Leaving them in place creates dozens of orphan nodes with no wiki connections. Deleting the staging output keeps the graph clean.
+> The checkpoint file `staging/pdfjobs/{name}.json` should be **kept** — it enables resume if reprocessing is ever needed.
 
 After copying, `raw_extracted/` will contain:
 
@@ -269,13 +292,14 @@ raw_extracted/{name}_result/images/       -- images referenced by wiki pages
 - Sources must link to: `[[raw_extracted/{name}|{name}.ext]]`
 - Never reference `staging/` paths in any wiki page
 
-**After verifying the copy, delete the staging output for that file:**
-```powershell
-Remove-Item -Recurse -Force "staging\{name}_result"
-Remove-Item -Force "staging\{name}.md"
+**Recovery: checkpoint says complete but `raw_extracted/{name}.md` is missing:**
+
+This means staging was deleted before the copy succeeded. Delete the checkpoint and re-extract:
+```bash
+rm -f "staging/pdfjobs/{name}.json"
+node ./mineru-client.js "raw/{name}.ext" staging
 ```
-> **Why:** Obsidian's Graph View indexes all `.md` files in the vault, including the per-chunk files inside `staging/{name}_result/markdowns/`. Leaving them in place creates dozens of orphan nodes with no wiki connections. Deleting the staging output keeps the graph clean.
-> The checkpoint file `staging/pdfjobs/{name}.json` should be **kept** — it enables resume if reprocessing is ever needed.
+Then repeat Steps 1–4 above.
 
 ---
 
@@ -343,35 +367,22 @@ When the user says "I updated a document", "我更新了文档", "请更新 wiki
 
 1. List `raw/` to find supported files (PDF, DOCX, DOC, PPTX, PPT)
 2. For each file, check `staging/pdfjobs/{filename}.json` — if `mergeComplete` is `true`, skip extraction
-3. Run the tool for any files not yet extracted — prefer single-file mode to control context budget:
+3. **Process one file at a time** (do NOT run extraction in the background or in parallel):
    ```bash
-   # Single file (preferred — process one at a time)
-   node ./mineru-client.js raw/{filename} staging
-
-   # Or whole directory
-   node ./mineru-client.js raw staging
+   # Always quote paths — filenames may contain Chinese characters, parentheses, or spaces
+   node ./mineru-client.js "raw/{filename}" staging
    ```
 4. Wait for the command to finish (may take several minutes per file)
-5. For each newly extracted file, copy output to `raw_extracted/`:
-   ```powershell
-   New-Item -ItemType Directory -Force "raw_extracted\{name}_result\images" | Out-Null
-   Copy-Item "staging\{name}.md" "raw_extracted\{name}.md" -Force
-   Copy-Item -Recurse -Force "staging\{name}_result\images\*" "raw_extracted\{name}_result\images\"
-   ```
-   Then verify both `raw_extracted/{name}.md` and `raw_extracted/{name}_result/images/` exist, and delete the staging output:
-   ```powershell
-   Remove-Item -Recurse -Force "staging\{name}_result"
-   Remove-Item -Force "staging\{name}.md"
-   ```
-6. Read `raw_extracted/{filename}.md` in sections (respect Context Budget Rules)
+5. For each newly extracted file, follow the **Post-Extraction Copy Rules** (Steps 1–4 above)
+6. Read `raw_extracted/{name}.md` in sections (respect Context Budget Rules)
 7. Synthesize or update wiki pages from the content
 8. Update `wiki/index.md`
 9. Append to `wiki/log.md`
 10. Run integrity check on all modified wiki pages (see Wiki Integrity Check)
 
-To check if a file is already processed (Windows):
+To check if a file is already processed:
 ```bash
-cmd /c "type staging\pdfjobs\{filename}.json"
+cat "staging/pdfjobs/{filename}.json"
 ```
 If `mergeComplete` is `true`, skip to step 5.
 
@@ -383,20 +394,13 @@ When the user adds a new source to `raw/` and asks you to ingest it:
 
 1. Detect newly added files in `raw/` (PDF, DOCX, DOC, PPTX, PPT)
 2. Check `staging/pdfjobs/{filename}.json` — skip extraction if `mergeComplete` is `true`
-3. If not yet extracted, run (prefer single-file mode):
-   `node ./mineru-client.js raw/{filename} staging`
-4. Copy output to `raw_extracted/`:
-   ```powershell
-   New-Item -ItemType Directory -Force "raw_extracted\{name}_result\images" | Out-Null
-   Copy-Item "staging\{name}.md" "raw_extracted\{name}.md" -Force
-   Copy-Item -Recurse -Force "staging\{name}_result\images\*" "raw_extracted\{name}_result\images\"
+3. If not yet extracted, run (**do NOT run in the background**):
+   ```bash
+   # Always quote paths — filenames may contain Chinese characters, parentheses, or spaces
+   node ./mineru-client.js "raw/{filename}" staging
    ```
-   Then verify both `raw_extracted/{name}.md` and `raw_extracted/{name}_result/images/` exist, and delete the staging output:
-   ```powershell
-   Remove-Item -Recurse -Force "staging\{name}_result"
-   Remove-Item -Force "staging\{name}.md"
-   ```
-5. Read `raw_extracted/{filename}.md` in sections (respect Context Budget Rules)
+4. Follow the **Post-Extraction Copy Rules** (Steps 1–4) to copy to `raw_extracted/` and clean staging
+5. Read `raw_extracted/{name}.md` in sections (respect Context Budget Rules)
 6. Identify major concepts, entities, and themes
 7. Create or update wiki pages in `wiki/`
 8. Create wiki-links between related concepts
