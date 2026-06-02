@@ -37,11 +37,14 @@ The goal is long-term knowledge compounding:
 # Folder Structure
 
 ```text
-raw/          -- immutable source documents (never modify)
-staging/      -- intermediate extracted markdown/text files
-wiki/         -- curated markdown knowledge pages
-wiki/index.md -- table of contents for the entire wiki
-wiki/log.md   -- append-only operation log
+raw/                             -- immutable source documents (never modify)
+staging/                         -- intermediate extracted files (temporary workspace; do not reference in wiki)
+raw_extracted/                   -- permanent parsed output: referenced by wiki pages
+  {filename}.md                  -- merged Markdown for the document
+  {filename}_result/images/      -- extracted images for the document
+wiki/                            -- curated markdown knowledge pages
+wiki/index.md                    -- table of contents for the entire wiki
+wiki/log.md                      -- append-only operation log
 ```
 
 ---
@@ -230,17 +233,57 @@ Preferred workflow:
 
 ```text
 raw/{name}.pdf / .docx / .pptx
-  -> node mineru-client.js raw/{name}.ext staging   (single file, preferred in LLM context)
-  -> node mineru-client.js raw staging              (whole directory)
-  -> staging/{name}.md          (read this for synthesis)
-  -> wiki/{topic}.md            (create/update wiki pages)
+  -> node ./mineru-client.js raw/{name}.ext staging     (1. extract to staging)
+  -> copy staging/{name}.md + images → raw_extracted/   (2. promote to permanent store)
+  -> read raw_extracted/{name}.md                       (3. for wiki synthesis)
+  -> wiki/{topic}.md                                    (4. create/update wiki pages)
+  -> integrity check                                    (5. links, images, tables, formulas)
 ```
 
 Do not directly synthesize large PDFs into final wiki pages in a single step.
 
-Always preserve intermediate extracted content in `staging/`.
+Never read from `staging/{name}_result/markdowns/` — use only the merged `staging/{name}.md` (or its copy at `raw_extracted/{name}.md`).
 
-Never read from `staging/{name}_result/markdowns/` — use only the merged `staging/{name}.md`.
+---
+
+# Post-Extraction Copy Rules
+
+After `node ./mineru-client.js ...` completes successfully (exit code 0, output ends with `✓`), copy the output to `raw_extracted/` using PowerShell:
+
+```powershell
+# Replace {name} with the file stem (filename without extension)
+New-Item -ItemType Directory -Force "raw_extracted\{name}_result\images" | Out-Null
+Copy-Item "staging\{name}.md" "raw_extracted\{name}.md" -Force
+Copy-Item -Recurse -Force "staging\{name}_result\images\*" "raw_extracted\{name}_result\images\"
+```
+
+After copying, `raw_extracted/` will contain:
+
+```text
+raw_extracted/{name}.md                   -- use this for wiki synthesis (NOT staging/)
+raw_extracted/{name}_result/images/       -- images referenced by wiki pages
+```
+
+**Rules for wiki pages referencing this content:**
+- Images must use Obsidian vault-relative path: `![[raw_extracted/{name}_result/images/{img}]]`
+- Sources must link to: `[[raw_extracted/{name}|{name}.ext]]`
+- Never reference `staging/` paths in any wiki page
+
+---
+
+# Wiki Integrity Check
+
+After creating or modifying **any** wiki page, perform a full integrity check:
+
+1. **Wiki-links**: Every `[[link]]` must resolve to an existing file in the vault
+2. **Image paths**: Every image must use `![[raw_extracted/{name}_result/images/{img}]]` format; verify the file exists
+3. **Sources links**: Each entry in `**Sources**:` must use `[[raw_extracted/{name}|display name]]` format
+4. **Tables**: All `|` separators are balanced; no broken rows
+5. **Code blocks**: Opening and closing fences match (triple-backtick count is even)
+6. **Formulas**: KaTeX `$...$` or `$$...$$` blocks are properly closed
+7. **Headings**: No skipped levels (e.g. H1 → H3 without H2)
+
+Fix all issues found before marking the task complete.
 
 ---
 
@@ -301,10 +344,17 @@ When the user says "I updated a document", "我更新了文档", "请更新 wiki
    node ./mineru-client.js raw staging
    ```
 4. Wait for the command to finish (may take several minutes per file)
-5. For each newly extracted file, read `staging/{filename}.md` in sections (respect Context Budget Rules)
-6. Synthesize or update wiki pages from the content
-7. Update `wiki/index.md`
-8. Append to `wiki/log.md`
+5. For each newly extracted file, copy output to `raw_extracted/`:
+   ```powershell
+   New-Item -ItemType Directory -Force "raw_extracted\{name}_result\images" | Out-Null
+   Copy-Item "staging\{name}.md" "raw_extracted\{name}.md" -Force
+   Copy-Item -Recurse -Force "staging\{name}_result\images\*" "raw_extracted\{name}_result\images\"
+   ```
+6. Read `raw_extracted/{filename}.md` in sections (respect Context Budget Rules)
+7. Synthesize or update wiki pages from the content
+8. Update `wiki/index.md`
+9. Append to `wiki/log.md`
+10. Run integrity check on all modified wiki pages (see Wiki Integrity Check)
 
 To check if a file is already processed (Windows):
 ```bash
@@ -322,13 +372,19 @@ When the user adds a new source to `raw/` and asks you to ingest it:
 2. Check `staging/pdfjobs/{filename}.json` — skip extraction if `mergeComplete` is `true`
 3. If not yet extracted, run (prefer single-file mode):
    `node ./mineru-client.js raw/{filename} staging`
-4. Read `staging/{filename}.md` in sections (respect Context Budget Rules)
-5. Identify major concepts, entities, and themes
-6. Create or update wiki pages in `wiki/`
-7. Create wiki-links between related concepts
-8. Update `wiki/index.md`
-9. Append changes to `wiki/log.md`
-10. Verify generated links
+4. Copy output to `raw_extracted/`:
+   ```powershell
+   New-Item -ItemType Directory -Force "raw_extracted\{name}_result\images" | Out-Null
+   Copy-Item "staging\{name}.md" "raw_extracted\{name}.md" -Force
+   Copy-Item -Recurse -Force "staging\{name}_result\images\*" "raw_extracted\{name}_result\images\"
+   ```
+5. Read `raw_extracted/{filename}.md` in sections (respect Context Budget Rules)
+6. Identify major concepts, entities, and themes
+7. Create or update wiki pages in `wiki/`
+8. Create wiki-links between related concepts
+9. Update `wiki/index.md`
+10. Append changes to `wiki/log.md`
+11. Run integrity check on all created/modified wiki pages (see Wiki Integrity Check)
 
 Minor and standard ingestion tasks may proceed automatically.
 
@@ -374,8 +430,8 @@ Every wiki page should follow this structure:
 **Summary**: One to two sentences describing this page.
 
 **Sources**:
-- filename.pdf
-- another-source.pdf
+- [[raw_extracted/filename|filename.pdf]]
+- [[raw_extracted/another-source|another-source.pdf]]
 
 **Last updated**: YYYY-MM-DD
 
@@ -505,8 +561,9 @@ Never modify files inside `raw/`.
 `raw/` is the immutable source archive.
 
 All derived content must go into:
-- `staging/`
-- `wiki/`
+- `staging/`       (temporary extraction workspace)
+- `raw_extracted/` (permanent parsed output, referenced by wiki)
+- `wiki/`          (curated knowledge pages)
 
 ---
 
