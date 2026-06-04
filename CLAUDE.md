@@ -309,11 +309,14 @@ After creating or modifying **any** wiki page, perform a full integrity check:
 
 1. **Wiki-links**: Every `[[link]]` must resolve to an existing file in the vault
 2. **Image paths**: Every image must use `![[raw_extracted/{name}_result/images/{img}]]` format; verify the file exists
-3. **Sources links**: Each entry in `**Sources**:` must use `[[raw_extracted/{name}|display name]]` format
-4. **Tables**: All `|` separators are balanced; no broken rows
-5. **Code blocks**: Opening and closing fences match (triple-backtick count is even)
-6. **Formulas**: KaTeX `$...$` or `$$...$$` blocks are properly closed
-7. **Headings**: No skipped levels (e.g. H1 → H3 without H2)
+3. **Image completeness**: Compare images in `raw_extracted/{name}_result/images/` against images referenced in the wiki page — no significant image should be missing
+4. **Formula verbatim**: Compare `$...$` and `$$...$$` blocks in the wiki page against the source in `raw_extracted/{name}.md` — formula syntax must not have been altered
+5. **Table completeness**: Every table present in the source section must appear in the wiki page
+6. **Sources links**: Each entry in `**Sources**:` must use `[[raw_extracted/{name}|display name]]` format
+7. **Tables**: All `|` separators are balanced; no broken rows
+8. **Code blocks**: Opening and closing fences match (triple-backtick count is even)
+9. **Formulas**: KaTeX `$...$` or `$$...$$` blocks are properly closed
+10. **Headings**: No skipped levels (e.g. H1 → H3 without H2)
 
 Fix all issues found before marking the task complete.
 
@@ -345,13 +348,14 @@ This environment has a limited context window (~32K tokens). Conserve aggressive
 
 Rules:
 - Never load a full staging Markdown file if it is larger than 50 KB
-- Read staging files in sections: use headings as split points
+- Read staging files in sections of **at most 100 lines** at a time; use headings as split points
+- **After reading each section, immediately write the wiki page(s) for that section before reading further** — do NOT read the entire document first and then start writing
 - Summarize each section before moving to the next; discard raw text after summarizing
 - Never hold more than one staging file section in context at a time
-- When writing wiki pages, write one page at a time
-- Check file size before reading (Windows):
+- When writing wiki pages, write one page at a time; **after each Write, verify with `ls wiki/{filename}.md` that the file was created before proceeding to the next page**
+- Check file size before reading:
   ```bash
-  cmd /c "for %F in (staging\file.md) do echo %~zF"
+  wc -c "raw_extracted/{filename}.md"
   ```
 
 If a staging file exceeds 200 KB, process only the most relevant sections:
@@ -374,8 +378,8 @@ When the user says "I updated a document", "我更新了文档", "请更新 wiki
    ```
 4. Wait for the command to finish (may take several minutes per file)
 5. For each newly extracted file, follow the **Post-Extraction Copy Rules** (Steps 1–4 above)
-6. Read `raw_extracted/{name}.md` in sections (respect Context Budget Rules)
-7. Synthesize or update wiki pages from the content
+6. Read `raw_extracted/{name}.md` in sections of at most 100 lines (respect Context Budget Rules)
+7. **For each section read: write the wiki page immediately, verify with `ls wiki/{filename}.md`, then read the next section** — do NOT read the entire document first; do NOT create multiple wiki files in the same tool call or in parallel
 8. Update `wiki/index.md`
 9. Append to `wiki/log.md`
 10. Run integrity check on all modified wiki pages (see Wiki Integrity Check)
@@ -400,13 +404,12 @@ When the user adds a new source to `raw/` and asks you to ingest it:
    node ./mineru-client.js "raw/{filename}" staging
    ```
 4. Follow the **Post-Extraction Copy Rules** (Steps 1–4) to copy to `raw_extracted/` and clean staging
-5. Read `raw_extracted/{name}.md` in sections (respect Context Budget Rules)
-6. Identify major concepts, entities, and themes
-7. Create or update wiki pages in `wiki/`
-8. Create wiki-links between related concepts
-9. Update `wiki/index.md`
-10. Append changes to `wiki/log.md`
-11. Run integrity check on all created/modified wiki pages (see Wiki Integrity Check)
+5. Read `raw_extracted/{name}.md` in sections of at most 100 lines (respect Context Budget Rules)
+6. **For each section read: identify the major concept(s), write the wiki page(s) immediately, then verify with `ls wiki/{filename}.md` before reading the next section** — do NOT read the entire document first
+7. Create wiki-links between related concepts
+8. Update `wiki/index.md`
+9. Append changes to `wiki/log.md`
+10. Run integrity check on all created/modified wiki pages (see Wiki Integrity Check)
 
 Minor and standard ingestion tasks may proceed automatically.
 
@@ -432,6 +435,13 @@ Requirements:
 - avoid unsupported markdown extensions
 - prefer atomic notes over extremely large pages
 - keep markdown human-readable
+- make sure tables、formulas and images in  `raw_extracted/{name}.md` files will be referenced in wiki you generated, because this parts are usually important for knowledge base
+
+**Content inclusion rules (mandatory):**
+- **Images**: every significant image from `raw_extracted/{name}.md` MUST appear in the wiki page using Obsidian vault-relative path: `![[raw_extracted/{name}_result/images/{img}]]`. Do NOT omit images.
+- **Formulas**: copy all `$...$` and `$$...$$` blocks **verbatim** from `raw_extracted/{name}.md` — do NOT rewrite, reformat, or simplify them. MinerU's output is already in the correct Obsidian/KaTeX format.
+- **Tables**: include all tables from the source. Copy markdown table syntax exactly; do not summarize tables into prose.
+- Images, formulas, and tables represent the most important knowledge in technical documents — omitting them is not acceptable.
 
 When useful:
 - generate tags
@@ -645,7 +655,7 @@ The final goal is a continuously evolving offline knowledge system:
 raw/
     source PDFs
 
-staging/
+raw_extracted/
     extracted markdown/text
 
 wiki/
