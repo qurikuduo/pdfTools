@@ -1,6 +1,6 @@
 # LLM Wiki
 
-A personal knowledge base maintained by Claude Code.
+A personal knowledge base maintained by Codex.
 Based on Andrej Karpathy's LLM Wiki pattern.
 
 ---
@@ -15,7 +15,7 @@ Use only preinstalled local tools and existing system capabilities.
 
 The wiki is maintained collaboratively:
 - The human curates and adds source documents
-- Claude organizes, summarizes, links, and maintains the knowledge structure
+- Codex organizes, summarizes, links, and maintains the knowledge structure
 
 ---
 
@@ -23,7 +23,7 @@ The wiki is maintained collaboratively:
 
 This wiki is a structured, interlinked knowledge base for multiple domains.
 
-Claude maintains the wiki.
+Codex maintains the wiki.
 The human curates sources, asks questions, and guides analysis.
 
 The goal is long-term knowledge compounding:
@@ -87,6 +87,97 @@ The tool is idempotent — re-running it resumes from the checkpoint automatical
 
 ---
 
+# PowerShell Environment Rules
+
+**Codex runs in PowerShell on Windows.** All commands must use PowerShell syntax, not bash/sh.
+
+## File Reading — Always use UTF-8 explicitly
+
+MinerU outputs UTF-8. PowerShell defaults to GBK/system encoding on Windows, causing garbled Chinese text.
+
+**ALWAYS read files with explicit UTF-8:**
+```powershell
+# Correct — explicit UTF-8
+$content = [System.IO.File]::ReadAllText("path/to/file.md", [System.Text.Encoding]::UTF8)
+
+# WRONG — defaults to system encoding (GBK on Chinese Windows)
+$content = Get-Content "path/to/file.md" -Raw
+```
+
+To read line-by-line with UTF-8:
+```powershell
+$lines = [System.IO.File]::ReadAllLines("raw_extracted/{name}.md", [System.Text.Encoding]::UTF8)
+```
+
+To read a section (e.g. lines 1-100):
+```powershell
+$lines = [System.IO.File]::ReadAllLines("raw_extracted/{name}.md", [System.Text.Encoding]::UTF8)
+$section = $lines[0..99] -join "`n"
+Write-Output $section
+```
+
+## File Writing — Wiki pages
+
+Use PowerShell heredoc with `Set-Content -Encoding UTF8`:
+```powershell
+@"
+# Page Title
+
+**Summary**: ...
+
+**Sources**:
+- [[raw_extracted/{name}|{name}.pdf]]
+
+**Last updated**: 2026-01-01
+
+---
+
+Main content here.
+
+## Related pages
+
+- [[other-page]]
+"@ | Set-Content -Encoding UTF8 "wiki/{pagename}.md"
+```
+
+Verify after writing:
+```powershell
+if (Test-Path "wiki/{pagename}.md") { Write-Output "OK" } else { Write-Output "FAILED" }
+```
+
+**If `Set-Content` output appears empty `(no output)`, the file was written successfully** — Set-Content produces no stdout by design.
+
+## Variable Expansion Pitfall (Chinese filenames)
+
+In PowerShell, `$name_result` is parsed as variable named `name_result` (undefined), not `$name` + `_result`.
+
+**Always use curly braces:**
+```powershell
+# Correct
+$name = "中文文件名"
+New-Item -ItemType Directory -Force -Path "raw_extracted/${name}_result/images"
+
+# WRONG — $name_result is undefined, path becomes 'raw_extracted/_result/images'
+$name = "中文文件名"
+New-Item -ItemType Directory -Force -Path "raw_extracted/$name_result/images"
+```
+
+When in doubt, use full hardcoded paths or Python for file operations on Chinese-named files.
+
+## Checking File Size
+```powershell
+(Get-Item "raw_extracted/{name}.md").Length  # bytes
+```
+
+## Listing Directory
+```powershell
+Get-ChildItem "wiki/" -Filter "*.md" | Select-Object Name, Length
+```
+
+---
+
+---
+
 # Offline Environment Rules
 
 This environment is fully offline.
@@ -129,7 +220,7 @@ Do not modify:
 - Python environments
 - PowerShell profiles
 - shell startup scripts
-- Claude configuration files
+- Codex configuration files
 - system registry
 - firewall settings
 
@@ -197,7 +288,7 @@ If the MinerU API is unreachable:
 ## 出错后的处理原则
 
 工具内部已内置自动重试（最多 20 次，含服务器重启等待）。  
-**如果工具仍然以非零退出码终止，说明自动恢复已失败，此时 Claude 应当立即停止，不要再次运行工具。**
+**如果工具仍然以非零退出码终止，说明自动恢复已失败，此时 Codex 应当立即停止，不要再次运行工具。**
 
 请按以下步骤告知用户：
 
@@ -215,8 +306,8 @@ If the MinerU API is unreachable:
    ```
    若返回错误或无响应，说明 MinerU（Docker 容器）尚未恢复。
 3. 提示用户等待 MinerU 服务恢复后，**无需任何额外操作**，直接重新运行原命令即可（断点续传会自动跳过已完成的部分）：
-   ```bash
-   node ./mineru-client.js raw/{filename} staging
+   ```powershell
+   node ./mineru-client.js "raw/{filename}" staging
    ```
 
 ## 不应做的事
@@ -252,23 +343,23 @@ Never read from `staging/{name}_result/markdowns/` — use only the merged `stag
 
 After `node ./mineru-client.js ...` completes successfully (exit code 0, output ends with `✓`), follow these **4 steps in order**.
 
-> ⚠️ **NEVER chain copy and delete in a single bash command.** If the copy fails, the delete will still execute and all staging data will be permanently lost.
+> ⚠️ **NEVER chain copy and delete in a single command.** If the copy fails, the delete will still execute and all staging data will be permanently lost.
 
-> ⚠️ **Bash variable pitfall with Chinese filenames:** If you store `{name}` in a variable `NAME`, always write `${NAME}_result` (with curly braces), **never `$NAME_result`** — bash expands `$NAME_result` as a single undefined variable and the path silently becomes wrong. If in doubt, use Python for copying (see below).
+> ⚠️ **Variable expansion pitfall:** Always write `${name}_result` (with curly braces), never `$name_result`. See PowerShell Environment Rules above.
 
-**Step 1 — Create destination directories:**
-```bash
-mkdir -p "raw_extracted/{name}_result/images"
+**Step 1 — Create destination directories (PowerShell):**
+```powershell
+New-Item -ItemType Directory -Force -Path "raw_extracted/${name}_result/images"
 ```
 
-**Step 2 — Copy files:**
-```bash
-cp -f "staging/{name}.md" "raw_extracted/{name}.md"
-cp -rf "staging/{name}_result/images/"* "raw_extracted/{name}_result/images/"
+**Step 2 — Copy files (PowerShell):**
+```powershell
+Copy-Item -Force "staging/${name}.md" "raw_extracted/${name}.md"
+Get-ChildItem "staging/${name}_result/images/" | Copy-Item -Destination "raw_extracted/${name}_result/images/" -Force
 ```
 
-> If `cp` fails for files with Chinese characters or parentheses in the name, use Python instead:
-> ```bash
+> If `Copy-Item` fails for files with Chinese characters or parentheses, use Python instead:
+> ```powershell
 > python -c "
 import shutil, os
 src = r'staging/{name}_result/images'
@@ -277,25 +368,26 @@ os.makedirs(dst, exist_ok=True)
 for f in os.listdir(src):
     shutil.copy2(os.path.join(src, f), os.path.join(dst, f))
 shutil.copy2(r'staging/{name}.md', r'raw_extracted/{name}.md')
-print(f'Copied {len(os.listdir(dst))} images + md')
+print('Copied', len(os.listdir(dst)), 'images + md')
 "
 > ```
 
 **Step 3 — Verify the copy succeeded** before touching staging:
-```bash
-test -f "raw_extracted/{name}.md" && echo "md OK" || echo "md MISSING"
-ls "raw_extracted/{name}_result/images/" 2>/dev/null | wc -l   # must be > 0 if source had images
+```powershell
+if (Test-Path "raw_extracted/${name}.md") { Write-Output "md OK" } else { Write-Output "md MISSING" }
+(Get-ChildItem "raw_extracted/${name}_result/images/" -ErrorAction SilentlyContinue | Measure-Object).Count
 ```
 If `md MISSING` appears, **stop immediately** — do not delete staging. Fix the path and re-run Steps 1–2.
 
-If image count is **0 but the source document has images**, the copy silently failed (likely a bash path expansion bug with Chinese filenames). **Stop — do not proceed to write wiki pages yet.** Fix the image copy using Python (see Step 2 Python fallback above), re-run Step 3 to confirm count > 0, then continue.
+If image count is **0 but the source document has images**, the copy silently failed (likely the variable expansion bug). **Stop — do not proceed to write wiki pages yet.** Fix the image copy using Python fallback above, re-run Step 3 to confirm count > 0, then continue.
 
 **Step 4 — Delete the staging output** (only after Step 3 confirms success):
-```bash
-rm -rf "staging/{name}_result"
-rm -f "staging/{name}.md"
+```powershell
+Remove-Item -Recurse -Force "staging/${name}_result" -ErrorAction SilentlyContinue
+Remove-Item -Force "staging/${name}.md" -ErrorAction SilentlyContinue
+Write-Output "Staging cleaned"
 ```
-> **Why:** Obsidian's Graph View indexes all `.md` files in the vault, including the per-chunk files inside `staging/{name}_result/markdowns/`. Leaving them in place creates dozens of orphan nodes with no wiki connections. Deleting the staging output keeps the graph clean.
+> **Why:** Obsidian's Graph View indexes all `.md` files in the vault, including the per-chunk files inside `staging/{name}_result/markdowns/`. Leaving them in place creates dozens of orphan nodes. Deleting keeps the graph clean.
 > The checkpoint file `staging/pdfjobs/{name}.json` should be **kept** — it enables resume if reprocessing is ever needed.
 
 After copying, `raw_extracted/` will contain:
@@ -313,9 +405,9 @@ raw_extracted/{name}_result/images/       -- images referenced by wiki pages
 **Recovery: checkpoint says complete but `raw_extracted/{name}.md` is missing:**
 
 This means staging was deleted before the copy succeeded. Delete the checkpoint and re-extract:
-```bash
-rm -f "staging/pdfjobs/{name}.json"
-node ./mineru-client.js "raw/{name}.ext" staging
+```powershell
+Remove-Item -Force "staging/pdfjobs/${name}.json"
+node ./mineru-client.js "raw/${name}.ext" staging
 ```
 Then repeat Steps 1–4 above.
 
@@ -328,13 +420,30 @@ After creating or modifying **any** wiki page, perform a full integrity check:
 1. **Wiki-links**: Every `[[link]]` must resolve to an existing file in the vault
 2. **Image paths**: Every image must use `![[raw_extracted/{name}_result/images/{img}]]` format; verify the file exists
 3. **Image completeness**: Compare images in `raw_extracted/{name}_result/images/` against images referenced in the wiki page — no significant image should be missing
-4. **Formula verbatim**: Compare `$...$` and `$$...$$` blocks in the wiki page against the source in `raw_extracted/{name}.md` — formula syntax must not have been altered
-5. **Table completeness**: Every table present in the source section must appear in the wiki page
-6. **Sources links**: Each entry in `**Sources**:` must use `[[raw_extracted/{name}|display name]]` format
-7. **Tables**: All `|` separators are balanced; no broken rows
-8. **Code blocks**: Opening and closing fences match (triple-backtick count is even)
-9. **Formulas**: KaTeX `$...$` or `$$...$$` blocks are properly closed
-10. **Headings**: No skipped levels (e.g. H1 → H3 without H2)
+4. **Sources links**: Each entry in `**Sources**:` must use `[[raw_extracted/{name}|display name]]` format
+5. **Tables**: All `|` separators are balanced; no broken rows
+6. **Code blocks**: Opening and closing fences match (triple-backtick count is even)
+7. **Formulas**: KaTeX `$...$` or `$$...$$` blocks are properly closed
+8. **Headings**: No skipped levels (e.g. H1 → H3 without H2)
+
+PowerShell integrity check script:
+```powershell
+$wikiFiles = Get-ChildItem "wiki/" -Filter "*.md"
+foreach ($f in $wikiFiles) {
+    $content = [System.IO.File]::ReadAllText($f.FullName, [System.Text.Encoding]::UTF8)
+    $links = [regex]::Matches($content, '\[\[([^\]|]+)(?:\|[^\]]*)?\]\]')
+    foreach ($m in $links) {
+        $target = $m.Groups[1].Value.Trim()
+        if ($target -notlike 'raw_extracted/*') {
+            $targetPath = "wiki/$target.md"
+            if (-not (Test-Path $targetPath)) {
+                Write-Output "BROKEN LINK in $($f.Name): [[$target]]"
+            }
+        }
+    }
+    Write-Output "OK: $($f.Name)"
+}
+```
 
 Fix all issues found before marking the task complete.
 
@@ -362,70 +471,29 @@ For very large documents:
 
 # Context Budget Rules
 
-This environment has a limited context window (~32K tokens). Conserve aggressively.
+This environment has a limited context window. Conserve aggressively.
 
 Check file size before reading:
-```bash
-wc -c "raw_extracted/{name}.md"
+```powershell
+(Get-Item "raw_extracted/{name}.md").Length  # bytes
 ```
-
-**⚠️ ENVIRONMENT CONSTRAINT: Only ONE tool call is allowed per response turn.**
-This applies to ALL tools — Write, Bash, Read, everything. If a response contains more than one tool call, ALL of them lose their parameters and fail with `InputValidationError`. Plan only ONE action at a time.
 
 **STRICT READ-WRITE LOOP — follow this exactly for every source document:**
 
 ```
-Step 1: Read at most 100 lines from the source file           [1 Read call, then STOP]
-Step 2: Write ONE wiki page based on that section — NOW      [1 Write or Bash call, then STOP]
-Step 3: Run: ls wiki/{pagename}.md to confirm it exists       [1 Bash call, then STOP]
+Step 1: Read at most 100 lines from the source file  [read, then STOP]
+Step 2: Write ONE wiki page based on that section — NOW, before reading more
+Step 3: Verify: if (Test-Path "wiki/{pagename}.md") { "OK" } else { "FAILED" }
 Step 4: Repeat from Step 1 for the next section
 ```
 
-**After your FIRST Read call, you have enough context to write one wiki page. Write it NOW. Do not read more sections first.**
+**After your FIRST read, you have enough context to write one wiki page. Write it NOW. Do not read more sections first.**
 
-**NEVER do any of the following — these cause ALL tool calls in that response to fail:**
-- ❌ Reading lines 100-199 when you have not yet written the page for lines 1-100
-- ❌ Reading lines 200, 300, 400... before writing the first page
+**NEVER do any of the following:**
+- ❌ Reading the TOC and planning all wiki pages before writing any
+- ❌ Reading lines 100-200 when you have not yet written the page for lines 1-100
+- ❌ Reading hundreds of lines before writing the first page
 - ❌ Saying "let me read more to understand the full picture" before writing
-- ❌ Writing multiple wiki pages in a single response turn
-- ❌ Combining a Write and a Bash call in the same response
-- ❌ Combining multiple Bash calls in the same response
-
-**The TOC only tells you chapter names. You must read each chapter’s content before writing its page. One chapter = one read → one write → one verify.**
-## If you see "InputValidationError: file_path missing" or "content missing"
-
-This error means you attempted to write multiple files in a single response turn. The parameters were lost because multiple tool calls were sent at once. **This is NOT a path problem — do not retry with a different path.**
-
-Recovery procedure — follow exactly:
-1. **Stop.** Do not retry the same batch.
-2. In your next response, write **exactly ONE file** — nothing else, no reading, no other tool calls.
-3. After it succeeds, run `ls wiki/{pagename}.md` to verify.
-4. Then write the next file in the following response — one file per response turn.
-
-If you see this error again after step 2: your response still contained multiple tool calls. Reduce to one Write call with no other tool calls in the same response.
-
-> **Note on Write tool content size:** If Write fails with only `content missing` (but `file_path` was accepted), the content may be too large for this deployment. Use bash + Python as a reliable alternative for writing wiki pages:
-> ```bash
-> python -c "
-f = open('wiki/{pagename}.md', 'w', encoding='utf-8')
-f.write(r'''# Page Title
-
-Content here including formulas like $$\frac{a}{b}$$ verbatim.''')
-f.close()
-print('done')
-"
-> ```
-> **Critical for formulas:** Always use a raw string `r'''...'''` (triple-quoted raw string) when the content contains LaTeX backslashes like `\text`, `\frac`, `\sqrt`. In a plain Python string, `\t` becomes a tab and `\s` is silently dropped — formulas get corrupted. A raw string treats all backslashes literally.
-> For long pages, write in multiple append calls (`open(..., 'a')`), one call per response turn.
-
-## If you see “InputValidationError: command missing” (Bash failure)
-
-This is the **same problem** — multiple Bash calls were sent in one response and all lost their `command` parameter.
-
-Recovery procedure — identical:
-1. **Stop.** Do not retry the batch.
-2. In your next response, run **exactly ONE bash command** — no other tool calls.
-3. Continue one bash call per response until done.
 
 If a file exceeds 200 KB, process only the most relevant sections:
 - Prioritize headings, abstracts, conclusions
@@ -441,23 +509,26 @@ When the user says "I updated a document", "我更新了文档", "请更新 wiki
 1. List `raw/` to find supported files (PDF, DOCX, DOC, PPTX, PPT)
 2. For each file, check `staging/pdfjobs/{filename}.json` — if `mergeComplete` is `true`, skip extraction
 3. **Process one file at a time** (do NOT run extraction in the background or in parallel):
-   ```bash
+   ```powershell
    # Always quote paths — filenames may contain Chinese characters, parentheses, or spaces
    node ./mineru-client.js "raw/{filename}" staging
    ```
 4. Wait for the command to finish (may take several minutes per file)
 5. For each newly extracted file, follow the **Post-Extraction Copy Rules** (Steps 1–4 above)
 6. Read `raw_extracted/{name}.md` in sections of at most 100 lines (respect Context Budget Rules)
-7. **For each section: write ONE wiki page immediately after reading it, run `ls wiki/{pagename}.md` to verify it exists, then read the next section.** Do NOT read multiple sections before writing. Do NOT write multiple pages in one turn.
+7. **For each section: write ONE wiki page immediately after reading it, verify with `Test-Path wiki/{pagename}.md`, then read the next section.** Do NOT read multiple sections before writing.
 8. Update `wiki/index.md`
 9. Append to `wiki/log.md`
 10. Run integrity check on all modified wiki pages (see Wiki Integrity Check)
 
 To check if a file is already processed:
-```bash
-cat "staging/pdfjobs/{filename}.json"
+```powershell
+if (Test-Path "staging/pdfjobs/{filename}.json") {
+    $j = [System.IO.File]::ReadAllText("staging/pdfjobs/{filename}.json", [System.Text.Encoding]::UTF8) | ConvertFrom-Json
+    $j.mergeComplete
+}
 ```
-If `mergeComplete` is `true`, skip to step 5.
+If `True`, skip to step 5.
 
 ---
 
@@ -468,13 +539,13 @@ When the user adds a new source to `raw/` and asks you to ingest it:
 1. Detect newly added files in `raw/` (PDF, DOCX, DOC, PPTX, PPT)
 2. Check `staging/pdfjobs/{filename}.json` — skip extraction if `mergeComplete` is `true`
 3. If not yet extracted, run (**do NOT run in the background**):
-   ```bash
+   ```powershell
    # Always quote paths — filenames may contain Chinese characters, parentheses, or spaces
    node ./mineru-client.js "raw/{filename}" staging
    ```
 4. Follow the **Post-Extraction Copy Rules** (Steps 1–4) to copy to `raw_extracted/` and clean staging
 5. Read `raw_extracted/{name}.md` in sections of at most 100 lines (respect Context Budget Rules)
-6. **For each section: write ONE wiki page immediately after reading it, run `ls wiki/{pagename}.md` to verify it exists, then read the next section.** Do NOT read multiple sections before writing. Do NOT write multiple pages in one turn.
+6. **For each section: write ONE wiki page immediately after reading it, verify with `Test-Path wiki/{pagename}.md`, then read the next section.** Do NOT read multiple sections before writing.
 7. Create wiki-links between related concepts
 8. Update `wiki/index.md`
 9. Append changes to `wiki/log.md`
@@ -504,13 +575,13 @@ Requirements:
 - avoid unsupported markdown extensions
 - prefer atomic notes over extremely large pages
 - keep markdown human-readable
-- make sure tables、formulas and images in  `raw_extracted/{name}.md` files will be referenced in wiki you generated, because this parts are usually important for knowledge base
+- make sure tables, formulas and images in `raw_extracted/{name}.md` files are referenced in wiki pages, because these are the most important knowledge
 
 **Content inclusion rules (mandatory):**
-- **Images**: every significant image from `raw_extracted/{name}.md` MUST appear in the wiki page using Obsidian vault-relative path: `![[raw_extracted/{name}_result/images/{img}]]`. Do NOT omit images.
-- **Formulas**: copy all `$...$` and `$$...$$` blocks **verbatim** from `raw_extracted/{name}.md` — do NOT rewrite, reformat, or simplify them. MinerU's output is already in the correct Obsidian/KaTeX format.
-- **Tables**: include all tables from the source. Copy markdown table syntax exactly; do not summarize tables into prose.
-- Images, formulas, and tables represent the most important knowledge in technical documents — omitting them is not acceptable.
+- **Images**: every significant image from `raw_extracted/{name}.md` MUST appear in the wiki page using: `![[raw_extracted/{name}_result/images/{img}]]`. Do NOT omit images.
+- **Formulas**: copy all `$...$` and `$$...$$` blocks **verbatim** from `raw_extracted/{name}.md` — do NOT rewrite or simplify them. MinerU's output is already in correct Obsidian/KaTeX format.
+- **Tables**: include all tables from the source. Copy markdown table syntax exactly.
+- Images, formulas, and tables represent the most important knowledge — omitting them is not acceptable.
 
 When useful:
 - generate tags
@@ -731,7 +802,7 @@ wiki/
     structured linked knowledge
 ```
 
-Claude should behave like:
+Codex should behave like:
 - a careful librarian
 - a technical researcher
 - a structured knowledge maintainer
@@ -740,3 +811,11 @@ NOT like:
 - an autonomous installer
 - a dependency manager
 - an internet-connected assistant
+
+# Environment Notes
+- Windows 11
+- PowerShell (default shell for all commands)
+- Node.js installed
+- Python installed
+- MinerU API at http://192.168.137.135:8000
+- All file I/O: use `[System.IO.File]::ReadAllText(path, UTF8)` and `Set-Content -Encoding UTF8`
