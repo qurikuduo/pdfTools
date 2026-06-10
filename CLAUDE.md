@@ -233,16 +233,20 @@ Preferred workflow:
 
 ```text
 raw/{name}.pdf / .docx / .pptx
-  -> node ./mineru-client.js raw/{name}.ext staging     (1. extract to staging)
-  -> copy staging/{name}.md + images → raw_extracted/   (2. promote to permanent store)
-  -> read raw_extracted/{name}.md                       (3. for wiki synthesis)
-  -> wiki/{topic}.md                                    (4. create/update wiki pages)
-  -> integrity check                                    (5. links, images, tables, formulas)
+   -> compare raw against raw_extracted/ and wiki/log.md  (1. identify already processed files)
+   -> process only raw files without a matching raw_extracted/{name}.md
+   -> node ./mineru-client.js raw/{name}.ext staging     (2. extract to staging)
+   -> copy staging/{name}.md + images → raw_extracted/   (3. promote to permanent store)
+   -> read raw_extracted/{name}.md                       (4. for wiki synthesis)
+   -> wiki/{topic}.md                                    (5. create/update wiki pages)
+   -> integrity check                                    (6. links, images, tables, formulas)
 ```
 
 Do not directly synthesize large PDFs into final wiki pages in a single step.
 
 Never read from `staging/{name}_result/markdowns/` — use only the merged `staging/{name}.md` (or its copy at `raw_extracted/{name}.md`).
+
+Startup rule: `staging/` and `staging/pdfjobs/` are transient recovery state only. When deciding what to work on after a restart, always start from `raw/`, mark anything that already has `raw_extracted/{name}.md` as completed, and skip both extraction and wiki regeneration for those completed files.
 
 ---
 
@@ -366,25 +370,26 @@ If a staging file exceeds 200 KB, process only the most relevant sections:
 When the user says "I updated a document", "我更新了文档", "请更新 wiki", or equivalent:
 
 1. List `raw/` to find supported files (PDF, DOCX, DOC, PPTX, PPT)
-2. For each file, check `staging/pdfjobs/{filename}.json` — if `mergeComplete` is `true`, skip extraction
-3. **Process one file at a time** (do NOT run extraction in the background or in parallel):
+2. Build the processed set first: any raw file that already has a matching `raw_extracted/{filename}.md` is already handled and must be skipped completely, including wiki regeneration
+3. Treat only the remaining raw files as new work; for each of them, check `staging/pdfjobs/{filename}.json` — if `mergeComplete` is `true`, skip extraction and use the existing `staging/{filename}.md` / `raw_extracted/{filename}.md` recovery path as appropriate
+4. **Process one file at a time** (do NOT run extraction in the background or in parallel):
    ```bash
    # Always quote paths — filenames may contain Chinese characters, parentheses, or spaces
    node ./mineru-client.js "raw/{filename}" staging
    ```
-4. Wait for the command to finish (may take several minutes per file)
-5. For each newly extracted file, follow the **Post-Extraction Copy Rules** (Steps 1–4 above)
-6. Read `raw_extracted/{name}.md` in sections (respect Context Budget Rules)
-7. Synthesize or update wiki pages from the content
-8. Update `wiki/index.md`
-9. Append to `wiki/log.md`
-10. Run integrity check on all modified wiki pages (see Wiki Integrity Check)
+5. Wait for the command to finish (may take several minutes per file)
+6. For each newly extracted file, follow the **Post-Extraction Copy Rules** (Steps 1–4 above)
+7. Read `raw_extracted/{name}.md` in sections (respect Context Budget Rules)
+8. Synthesize or update wiki pages from the content
+9. Update `wiki/index.md`
+10. Append to `wiki/log.md`
+11. Run integrity check on all modified wiki pages (see Wiki Integrity Check)
 
 To check if a file is already processed:
 ```bash
 cat "staging/pdfjobs/{filename}.json"
 ```
-If `mergeComplete` is `true`, skip to step 5.
+If `mergeComplete` is `true`, only treat it as a recovery hint for an unprocessed file; never use it to re-process a file that already has `raw_extracted/{filename}.md`.
 
 ---
 
@@ -392,21 +397,22 @@ If `mergeComplete` is `true`, skip to step 5.
 
 When the user adds a new source to `raw/` and asks you to ingest it:
 
-1. Detect newly added files in `raw/` (PDF, DOCX, DOC, PPTX, PPT)
-2. Check `staging/pdfjobs/{filename}.json` — skip extraction if `mergeComplete` is `true`
-3. If not yet extracted, run (**do NOT run in the background**):
+1. Detect all supported files in `raw/` (PDF, DOCX, DOC, PPTX, PPT)
+2. First identify which files are already processed by checking for a matching `raw_extracted/{filename}.md`; those files are finished and must be skipped without extraction or wiki regeneration
+3. Only for the remaining unprocessed files, check `staging/pdfjobs/{filename}.json` and extract them if needed
+4. If not yet extracted, run (**do NOT run in the background**):
    ```bash
    # Always quote paths — filenames may contain Chinese characters, parentheses, or spaces
    node ./mineru-client.js "raw/{filename}" staging
    ```
-4. Follow the **Post-Extraction Copy Rules** (Steps 1–4) to copy to `raw_extracted/` and clean staging
-5. Read `raw_extracted/{name}.md` in sections (respect Context Budget Rules)
-6. Identify major concepts, entities, and themes
-7. Create or update wiki pages in `wiki/`
-8. Create wiki-links between related concepts
-9. Update `wiki/index.md`
-10. Append changes to `wiki/log.md`
-11. Run integrity check on all created/modified wiki pages (see Wiki Integrity Check)
+5. Follow the **Post-Extraction Copy Rules** (Steps 1–4) to copy to `raw_extracted/` and clean staging
+6. Read `raw_extracted/{name}.md` in sections (respect Context Budget Rules)
+7. Identify major concepts, entities, and themes
+8. Create or update wiki pages in `wiki/`
+9. Create wiki-links between related concepts
+10. Update `wiki/index.md`
+11. Append changes to `wiki/log.md`
+12. Run integrity check on all created/modified wiki pages (see Wiki Integrity Check)
 
 Minor and standard ingestion tasks may proceed automatically.
 
