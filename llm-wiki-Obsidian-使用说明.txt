@@ -11,6 +11,67 @@
 - 然后回车等待 claude code 按照编排好的流程工作，工作过程中要多次确认 claude code 的权限请求，一般都接受即可，但是要注意它的删除动作
 - 等 claude code 工作完毕后会总结本次更新 wiki 的内容列表
 # 3. LLM-WIKI 工作流程
-- 扫描 raw 目录中新增的 pdf、word文档 等文件
-- 将 扫描后的新增文件逐个的按照每 5 个页面一轮次的提交到推理终端中运行的 MinerU 服务中进行文档解析，解析后返回的 markdown 格式的文本文件和文档中的图片存储在仓库的 staging 目录 staging/{filename}_result/images/`
-- Save checkpoint to `staging/pdfjobs/{filename}.json` 
+- 扫描 raw 目录中新增的 pdf、word、ppt 等文件（支持 PDF、DOCX、DOC、PPTX、PPT）
+- 将扫描后的新增文件逐个按照每 5 个页面一轮次的方式提交到推理终端中运行的 MinerU 服务进行文档解析
+- 解析后返回的 Markdown 格式文本和文档中的图片存储在仓库的 staging 目录：
+  - `staging/{filename}.md`                  -- 合并后的 Markdown（用于 wiki 合成）
+  - `staging/{filename}_result/images/`      -- 提取的图片
+  - `staging/pdfjobs/{filename}.json`        -- 断点续传文件（支持中断后恢复）
+- Claude 读取 `staging/{filename}.md`，将内容整理为 wiki 页面写入 `wiki/` 目录
+- 同时将解析结果永久存档至 `raw_extracted/` 目录：
+  - `raw_extracted/{filename}.md`            -- 文档的 Markdown 全文
+  - `raw_extracted/{filename}_result/images/` -- 文档的图片
+- 更新 `wiki/index.md`（全局目录）和 `wiki/log.md`（操作日志）
+
+# 4. 目录结构说明
+```
+raw/                             -- 不可修改的原始文档（禁止编辑）
+staging/                         -- 解析中间文件（临时工作区，不直接引用到wiki）
+raw_extracted/                   -- 永久存档的解析结果（wiki页面引用此处）
+  {filename}.md                  -- 文档合并后的 Markdown
+  {filename}_result/images/      -- 文档提取的图片
+wiki/                            -- 整理后的知识页面
+wiki/index.md                    -- 全局目录
+wiki/log.md                      -- 追加式操作日志
+```
+
+# 5. MinerU 服务说明
+- MinerU API 地址：http://192.168.137.135:8000
+- 工具脚本：`mineru-client.js`（需放在仓库根目录）
+- 工具具有断点续传能力，中断后重新运行会自动从上次进度继续
+
+手动调用方式（在仓库根目录的终端中执行）：
+```bash
+# 解析单个文件
+node ./mineru-client.js raw/myfile.pdf staging
+
+# 解析 raw 目录下所有文件
+node ./mineru-client.js raw staging
+```
+
+可选环境变量：
+```
+MINERU_API_URL     -- API 地址          （默认：http://192.168.137.135:8000）
+MINERU_CHUNK_SIZE  -- 每次提交的页数    （默认：5）
+MINERU_LANG        -- 识别语言代码      （默认：ch,en）
+MINERU_MAX_CHUNKS  -- 最大分块数限制    （默认：200）
+```
+
+# 6. 错误判断与处理
+判断 MinerU 工具是否出错的方式：
+1. 退出码非零（exit code ≠ 0）：命令失败
+2. 输出中包含 `ERROR` 关键字
+3. 输出中出现以下字样：`aborted at chunk` / `Task not found` / `Health check failed` / `Server did not recover` / `timed out`
+4. `staging/{filename}.md` 未生成
+5. 断点文件中存在 `"status": "failed"` 的 chunk
+
+成功标志：输出末尾出现 `✓`，且 `staging/{filename}.md` 文件存在。
+
+工具内部已内置自动重试（最多 20 次，含服务器重启等待）。  
+若工具仍以非零退出码终止，说明自动恢复已失败，应停止操作并检查 MinerU 服务是否正常运行。
+
+# 7. 注意事项
+- 本系统为离线环境，禁止执行任何网络请求、包安装或依赖更新操作
+- 不要修改 raw/ 目录中的原始文档
+- 不要直接修改 staging/ 中的中间文件，该目录为临时工作区
+- wiki 页面由 Claude 自动维护，人工负责提供原始文档和引导分析方向
