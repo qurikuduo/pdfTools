@@ -1,0 +1,16 @@
+# 0. 安装 Obsidian 、node、git、claude code、cc Switch（参考《InstallObsidian+Claudian+ClaudeCode+ccswitch.txt》）
+# 1. 创建 Obsidian 仓库
+- 打开 Obsidian，左下角，在 仓库（Vault） 列表中点击管理仓库，选择“创建”，填写仓库名称并选择仓库存储位置。
+- 删除默认的 “欢迎”页面，创建目录：raw 和 wiki
+- 拷贝一个 pdf 文件到 raw 目录，建议不要超过 20 页
+- 拷贝 mineru-client.js 和 CLAUDE.md 到仓库的目录（ raw 和 wiki 文件夹所在的目录）
+# 2. 使用 Claude 自动创建 wiki 
+- 打开资源管理器，导航到仓库所在目录（ raw 和 wiki 文件夹所在的目录），右键，点击“在终端中打开”
+- 输入 claude，点击 yes
+- 输入：我更新了文档，更新wiki
+- 然后回车等待 claude code 按照编排好的流程工作，工作过程中要多次确认 claude code 的权限请求，一般都接受即可，但是要注意它的删除动作
+- 等 claude code 工作完毕后会总结本次更新 wiki 的内容列表
+# 3. LLM-WIKI 工作流程
+- 扫描 raw 目录中新增的 pdf、word文档 等文件
+- 将 扫描后的新增文件逐个的按照每 5 个页面一轮次的提交到推理终端中运行的 MinerU 服务中进行文档解析，解析后返回的 markdown 格式的文本文件和文档中的图片存储在仓库的 staging 目录 staging/{filename}_result/images/`
+- Save checkpoint to `staging/pdfjobs/{filename}.json` 

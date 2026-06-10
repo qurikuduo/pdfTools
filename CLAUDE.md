@@ -252,9 +252,7 @@ Never read from `staging/{name}_result/markdowns/` — use only the merged `stag
 
 After `node ./mineru-client.js ...` completes successfully (exit code 0, output ends with `✓`), follow these **4 steps in order**.
 
-> ⚠️ **NEVER chain copy and delete in a single bash command.** If the copy fails, the delete will still execute and all staging data will be permanently lost.
-
-> ⚠️ **Bash variable pitfall with Chinese filenames:** If you store `{name}` in a variable `NAME`, always write `${NAME}_result` (with curly braces), **never `$NAME_result`** — bash expands `$NAME_result` as a single undefined variable and the path silently becomes wrong. If in doubt, use Python for copying (see below).
+> ⚠️ **NEVER chain copy and delete in a single PowerShell command.** If the copy fails, the delete will still execute and all staging data will be permanently lost.
 
 **Step 1 — Create destination directories:**
 ```bash
@@ -267,28 +265,12 @@ cp -f "staging/{name}.md" "raw_extracted/{name}.md"
 cp -rf "staging/{name}_result/images/"* "raw_extracted/{name}_result/images/"
 ```
 
-> If `cp` fails for files with Chinese characters or parentheses in the name, use Python instead:
-> ```bash
-> python -c "
-import shutil, os
-src = r'staging/{name}_result/images'
-dst = r'raw_extracted/{name}_result/images'
-os.makedirs(dst, exist_ok=True)
-for f in os.listdir(src):
-    shutil.copy2(os.path.join(src, f), os.path.join(dst, f))
-shutil.copy2(r'staging/{name}.md', r'raw_extracted/{name}.md')
-print(f'Copied {len(os.listdir(dst))} images + md')
-"
-> ```
-
 **Step 3 — Verify the copy succeeded** before touching staging:
 ```bash
 test -f "raw_extracted/{name}.md" && echo "md OK" || echo "md MISSING"
-ls "raw_extracted/{name}_result/images/" 2>/dev/null | wc -l   # must be > 0 if source had images
+ls "raw_extracted/{name}_result/images/" 2>/dev/null | wc -l   # must be >= 0
 ```
 If `md MISSING` appears, **stop immediately** — do not delete staging. Fix the path and re-run Steps 1–2.
-
-If image count is **0 but the source document has images**, the copy silently failed (likely a bash path expansion bug with Chinese filenames). **Stop — do not proceed to write wiki pages yet.** Fix the image copy using Python (see Step 2 Python fallback above), re-run Step 3 to confirm count > 0, then continue.
 
 **Step 4 — Delete the staging output** (only after Step 3 confirms success):
 ```bash
@@ -327,14 +309,11 @@ After creating or modifying **any** wiki page, perform a full integrity check:
 
 1. **Wiki-links**: Every `[[link]]` must resolve to an existing file in the vault
 2. **Image paths**: Every image must use `![[raw_extracted/{name}_result/images/{img}]]` format; verify the file exists
-3. **Image completeness**: Compare images in `raw_extracted/{name}_result/images/` against images referenced in the wiki page — no significant image should be missing
-4. **Formula verbatim**: Compare `$...$` and `$$...$$` blocks in the wiki page against the source in `raw_extracted/{name}.md` — formula syntax must not have been altered
-5. **Table completeness**: Every table present in the source section must appear in the wiki page
-6. **Sources links**: Each entry in `**Sources**:` must use `[[raw_extracted/{name}|display name]]` format
-7. **Tables**: All `|` separators are balanced; no broken rows
-8. **Code blocks**: Opening and closing fences match (triple-backtick count is even)
-9. **Formulas**: KaTeX `$...$` or `$$...$$` blocks are properly closed
-10. **Headings**: No skipped levels (e.g. H1 → H3 without H2)
+3. **Sources links**: Each entry in `**Sources**:` must use `[[raw_extracted/{name}|display name]]` format
+4. **Tables**: All `|` separators are balanced; no broken rows
+5. **Code blocks**: Opening and closing fences match (triple-backtick count is even)
+6. **Formulas**: KaTeX `$...$` or `$$...$$` blocks are properly closed
+7. **Headings**: No skipped levels (e.g. H1 → H3 without H2)
 
 Fix all issues found before marking the task complete.
 
@@ -364,70 +343,18 @@ For very large documents:
 
 This environment has a limited context window (~32K tokens). Conserve aggressively.
 
-Check file size before reading:
-```bash
-wc -c "raw_extracted/{name}.md"
-```
+Rules:
+- Never load a full staging Markdown file if it is larger than 50 KB
+- Read staging files in sections: use headings as split points
+- Summarize each section before moving to the next; discard raw text after summarizing
+- Never hold more than one staging file section in context at a time
+- When writing wiki pages, write one page at a time
+- Check file size before reading (Windows):
+  ```bash
+  cmd /c "for %F in (staging\file.md) do echo %~zF"
+  ```
 
-**⚠️ ENVIRONMENT CONSTRAINT: Only ONE tool call is allowed per response turn.**
-This applies to ALL tools — Write, Bash, Read, everything. If a response contains more than one tool call, ALL of them lose their parameters and fail with `InputValidationError`. Plan only ONE action at a time.
-
-**STRICT READ-WRITE LOOP — follow this exactly for every source document:**
-
-```
-Step 1: Read at most 100 lines from the source file           [1 Read call, then STOP]
-Step 2: Write ONE wiki page based on that section — NOW      [1 Write or Bash call, then STOP]
-Step 3: Run: ls wiki/{pagename}.md to confirm it exists       [1 Bash call, then STOP]
-Step 4: Repeat from Step 1 for the next section
-```
-
-**After your FIRST Read call, you have enough context to write one wiki page. Write it NOW. Do not read more sections first.**
-
-**NEVER do any of the following — these cause ALL tool calls in that response to fail:**
-- ❌ Reading lines 100-199 when you have not yet written the page for lines 1-100
-- ❌ Reading lines 200, 300, 400... before writing the first page
-- ❌ Saying "let me read more to understand the full picture" before writing
-- ❌ Writing multiple wiki pages in a single response turn
-- ❌ Combining a Write and a Bash call in the same response
-- ❌ Combining multiple Bash calls in the same response
-
-**The TOC only tells you chapter names. You must read each chapter’s content before writing its page. One chapter = one read → one write → one verify.**
-## If you see "InputValidationError: file_path missing" or "content missing"
-
-This error means you attempted to write multiple files in a single response turn. The parameters were lost because multiple tool calls were sent at once. **This is NOT a path problem — do not retry with a different path.**
-
-Recovery procedure — follow exactly:
-1. **Stop.** Do not retry the same batch.
-2. In your next response, write **exactly ONE file** — nothing else, no reading, no other tool calls.
-3. After it succeeds, run `ls wiki/{pagename}.md` to verify.
-4. Then write the next file in the following response — one file per response turn.
-
-If you see this error again after step 2: your response still contained multiple tool calls. Reduce to one Write call with no other tool calls in the same response.
-
-> **Note on Write tool content size:** If Write fails with only `content missing` (but `file_path` was accepted), the content may be too large for this deployment. Use bash + Python as a reliable alternative for writing wiki pages:
-> ```bash
-> python -c "
-f = open('wiki/{pagename}.md', 'w', encoding='utf-8')
-f.write(r'''# Page Title
-
-Content here including formulas like $$\frac{a}{b}$$ verbatim.''')
-f.close()
-print('done')
-"
-> ```
-> **Critical for formulas:** Always use a raw string `r'''...'''` (triple-quoted raw string) when the content contains LaTeX backslashes like `\text`, `\frac`, `\sqrt`. In a plain Python string, `\t` becomes a tab and `\s` is silently dropped — formulas get corrupted. A raw string treats all backslashes literally.
-> For long pages, write in multiple append calls (`open(..., 'a')`), one call per response turn.
-
-## If you see “InputValidationError: command missing” (Bash failure)
-
-This is the **same problem** — multiple Bash calls were sent in one response and all lost their `command` parameter.
-
-Recovery procedure — identical:
-1. **Stop.** Do not retry the batch.
-2. In your next response, run **exactly ONE bash command** — no other tool calls.
-3. Continue one bash call per response until done.
-
-If a file exceeds 200 KB, process only the most relevant sections:
+If a staging file exceeds 200 KB, process only the most relevant sections:
 - Prioritize headings, abstracts, conclusions
 - Skip repetitive tables or appendices
 - Note in `wiki/log.md` that the document was partially processed due to context limits
@@ -447,8 +374,8 @@ When the user says "I updated a document", "我更新了文档", "请更新 wiki
    ```
 4. Wait for the command to finish (may take several minutes per file)
 5. For each newly extracted file, follow the **Post-Extraction Copy Rules** (Steps 1–4 above)
-6. Read `raw_extracted/{name}.md` in sections of at most 100 lines (respect Context Budget Rules)
-7. **For each section: write ONE wiki page immediately after reading it, run `ls wiki/{pagename}.md` to verify it exists, then read the next section.** Do NOT read multiple sections before writing. Do NOT write multiple pages in one turn.
+6. Read `raw_extracted/{name}.md` in sections (respect Context Budget Rules)
+7. Synthesize or update wiki pages from the content
 8. Update `wiki/index.md`
 9. Append to `wiki/log.md`
 10. Run integrity check on all modified wiki pages (see Wiki Integrity Check)
@@ -473,12 +400,13 @@ When the user adds a new source to `raw/` and asks you to ingest it:
    node ./mineru-client.js "raw/{filename}" staging
    ```
 4. Follow the **Post-Extraction Copy Rules** (Steps 1–4) to copy to `raw_extracted/` and clean staging
-5. Read `raw_extracted/{name}.md` in sections of at most 100 lines (respect Context Budget Rules)
-6. **For each section: write ONE wiki page immediately after reading it, run `ls wiki/{pagename}.md` to verify it exists, then read the next section.** Do NOT read multiple sections before writing. Do NOT write multiple pages in one turn.
-7. Create wiki-links between related concepts
-8. Update `wiki/index.md`
-9. Append changes to `wiki/log.md`
-10. Run integrity check on all created/modified wiki pages (see Wiki Integrity Check)
+5. Read `raw_extracted/{name}.md` in sections (respect Context Budget Rules)
+6. Identify major concepts, entities, and themes
+7. Create or update wiki pages in `wiki/`
+8. Create wiki-links between related concepts
+9. Update `wiki/index.md`
+10. Append changes to `wiki/log.md`
+11. Run integrity check on all created/modified wiki pages (see Wiki Integrity Check)
 
 Minor and standard ingestion tasks may proceed automatically.
 
@@ -504,13 +432,6 @@ Requirements:
 - avoid unsupported markdown extensions
 - prefer atomic notes over extremely large pages
 - keep markdown human-readable
-- make sure tables、formulas and images in  `raw_extracted/{name}.md` files will be referenced in wiki you generated, because this parts are usually important for knowledge base
-
-**Content inclusion rules (mandatory):**
-- **Images**: every significant image from `raw_extracted/{name}.md` MUST appear in the wiki page using Obsidian vault-relative path: `![[raw_extracted/{name}_result/images/{img}]]`. Do NOT omit images.
-- **Formulas**: copy all `$...$` and `$$...$$` blocks **verbatim** from `raw_extracted/{name}.md` — do NOT rewrite, reformat, or simplify them. MinerU's output is already in the correct Obsidian/KaTeX format.
-- **Tables**: include all tables from the source. Copy markdown table syntax exactly; do not summarize tables into prose.
-- Images, formulas, and tables represent the most important knowledge in technical documents — omitting them is not acceptable.
 
 When useful:
 - generate tags
@@ -724,7 +645,7 @@ The final goal is a continuously evolving offline knowledge system:
 raw/
     source PDFs
 
-raw_extracted/
+staging/
     extracted markdown/text
 
 wiki/
