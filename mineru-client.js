@@ -22,7 +22,7 @@
  *
  * Environment variables:
  *   MINERU_API_URL     API base URL          (default: http://192.168.137.135:8000)
- *   MINERU_CHUNK_SIZE  Pages per chunk       (default: 5)
+ *   MINERU_CHUNK_SIZE  Pages per chunk       (default: 50)
  *   MINERU_LANG        Languages, CSV        (default: ch,en)
  *   MINERU_BACKEND     Backend engine        (default: hybrid-auto-engine)
  *   MINERU_MAX_CHUNKS  Max chunks per PDF    (default: 200  = 4000 pages)
@@ -40,15 +40,19 @@ const zlib    = require('zlib');
 // ─── Configuration ────────────────────────────────────────────────────────────
 
 const CFG = {
-  apiUrl:         process.env.MINERU_API_URL    || 'http://192.168.137.135:8000',
-  chunkSize:      parseInt(process.env.MINERU_CHUNK_SIZE  || '5',   10),
-  maxChunks:      parseInt(process.env.MINERU_MAX_CHUNKS  || '200', 10),
-  langList:       (process.env.MINERU_LANG       || 'ch,en').split(',').map(s => s.trim()),
-  backend:        process.env.MINERU_BACKEND     || 'hybrid-auto-engine',
-  debug:          process.env.MINERU_DEBUG === '1',
-  pollStartMs:    3000,
-  pollMaxMs:      10000,
-  pollTimeoutMs:  30 * 60 * 1000,   // 30 min per chunk
+  apiUrl:                process.env.MINERU_API_URL                  || 'http://192.168.137.135:8000',
+  chunkSize:             parseInt(process.env.MINERU_CHUNK_SIZE       || '50',  10),
+  maxChunks:             parseInt(process.env.MINERU_MAX_CHUNKS       || '200', 10),
+  // Documents with a detected page count at or below this threshold are sent as a
+  // single task (no chunking), eliminating repeated full-file uploads.
+  // Set to 0 to always use chunked mode regardless of page count.
+  singleChunkThreshold:  parseInt(process.env.MINERU_SINGLE_CHUNK_THRESHOLD || '1000', 10),
+  langList:              (process.env.MINERU_LANG    || 'ch,en').split(',').map(s => s.trim()),
+  backend:               process.env.MINERU_BACKEND  || 'hybrid-auto-engine',
+  debug:                 process.env.MINERU_DEBUG === '1',
+  pollStartMs:           3000,
+  pollMaxMs:             10000,
+  pollTimeoutMs:         parseInt(process.env.MINERU_POLL_TIMEOUT_MS  || String(30 * 60 * 1000), 10),
 };
 
 // ─── Logging ──────────────────────────────────────────────────────────────────
@@ -327,16 +331,30 @@ function loadCheckpoint(jobsDir, pdfName) {
 }
 
 function initCheckpoint(pdfName, filePath) {
-  const pageCount    = filePath ? readFilePageCount(filePath) : null;
-  const neededChunks = pageCount != null
-    ? Math.ceil(pageCount / CFG.chunkSize)
-    : CFG.maxChunks;
-  const actualChunks = Math.min(Math.max(neededChunks, 1), CFG.maxChunks);
+  const pageCount = filePath ? readFilePageCount(filePath) : null;
+
+  let chunks;
+  let chunkSize;
+
+  if (pageCount != null && CFG.singleChunkThreshold > 0 && pageCount <= CFG.singleChunkThreshold) {
+    // Small-enough document: send all pages in one task.
+    // Avoids uploading the full file once per chunk and eliminates merge/dedup overhead.
+    chunks    = [{ chunkId: 0, startPage: 0, endPage: pageCount - 1, status: 'pending', imageFiles: [] }];
+    chunkSize = pageCount;
+  } else {
+    const neededChunks = pageCount != null
+      ? Math.ceil(pageCount / CFG.chunkSize)
+      : CFG.maxChunks;
+    const actualChunks = Math.min(Math.max(neededChunks, 1), CFG.maxChunks);
+    chunks    = buildChunks(CFG.chunkSize, actualChunks);
+    chunkSize = CFG.chunkSize;
+  }
+
   return {
     pdfName,
     pageCount,
-    chunkSize:     CFG.chunkSize,
-    chunks:        buildChunks(CFG.chunkSize, actualChunks),
+    chunkSize,
+    chunks,
     pdfComplete:   false,
     mergeComplete: false,
     lastUpdated:   new Date().toISOString(),
@@ -716,7 +734,10 @@ async function processPdf(pdfPath, outputDir) {
     checkpoint = initCheckpoint(pdfName, pdfPath);
     saveCheckpoint(dirs.jobsDir, checkpoint);
     const pgInfo = checkpoint.pageCount != null ? ` (detected ${checkpoint.pageCount} pages)` : '';
-    log(`  New checkpoint: ${checkpoint.chunks.length} planned chunk(s) (${CFG.chunkSize} pages/chunk)${pgInfo}`);
+    const chunkDesc = checkpoint.chunks.length === 1 && checkpoint.pageCount != null
+      ? `1 chunk — all pages in one request (single-chunk mode)`
+      : `${checkpoint.chunks.length} chunk(s), ${checkpoint.chunkSize} pages/chunk`;
+    log(`  New checkpoint: ${chunkDesc}${pgInfo}`);
   } else {
     const done  = checkpoint.chunks.filter(c => c.status === 'completed').length;
     const skip  = checkpoint.chunks.filter(c => c.status === 'skipped').length;
@@ -828,8 +849,10 @@ async function main() {
       '  MINERU_CHUNK_SIZE  Pages per chunk       (default: 5)',
       '  MINERU_LANG        Languages, CSV        (default: ch,en)',
       '  MINERU_BACKEND     Backend engine        (default: hybrid-auto-engine)',
-      '  MINERU_MAX_CHUNKS  Max chunks per PDF    (default: 200)',
-      '  MINERU_DEBUG       1 for verbose output  (default: 0)',
+      '  MINERU_MAX_CHUNKS                Max chunks per PDF          (default: 200)',
+      '  MINERU_SINGLE_CHUNK_THRESHOLD    Max pages for single-task   (default: 1000, 0=always chunk)',
+      '  MINERU_POLL_TIMEOUT_MS           Per-task timeout in ms      (default: 1800000 = 30 min)',
+      '  MINERU_DEBUG                     1 for verbose output        (default: 0)',
       '',
     ].join('\n'));
     process.exit(1);
@@ -868,6 +891,7 @@ async function main() {
   log(`  Output dir: ${outputDir}`);
   log(`  Chunk size: ${CFG.chunkSize} pages`);
   log(`  Max chunks: ${CFG.maxChunks} (${CFG.maxChunks * CFG.chunkSize} pages max)`);
+  log(`  Single-chunk threshold: ${CFG.singleChunkThreshold > 0 ? `≤${CFG.singleChunkThreshold} pages` : 'disabled'}`);
   log(`  Languages:  ${CFG.langList.join(', ')}`);
   log(`  Backend:    ${CFG.backend}`);
   if (checkpointStart && !isSingleFile) log(`  Resume from: ${checkpointStart}`);
