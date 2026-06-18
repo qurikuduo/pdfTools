@@ -35,6 +35,7 @@ const https   = require('https');
 const fs      = require('fs');
 const path    = require('path');
 const crypto  = require('crypto');
+const zlib    = require('zlib');
 
 // ─── Configuration ────────────────────────────────────────────────────────────
 
@@ -450,14 +451,34 @@ function contentHashOf(markdown) {
 function readFilePageCount(filePath) {
   if (path.extname(filePath).toLowerCase() !== '.pdf') return null;
   try {
-    const buf = fs.readFileSync(filePath);
-    const str = buf.toString('latin1');
-    const matches = [...str.matchAll(/\/Count\s+(\d+)/g)];
-    if (matches.length === 0) return null;
-    const counts = matches
-      .map(m => parseInt(m[1], 10))
-      .filter(n => n > 0 && n < 100000);
-    return counts.length > 0 ? Math.max(...counts) : null;
+    const buf  = fs.readFileSync(filePath);
+    const str  = buf.toString('latin1');
+    const counts = new Set();
+
+    const collectCounts = src => {
+      for (const m of src.matchAll(/\/Count\s+(\d+)/g)) {
+        const n = parseInt(m[1], 10);
+        if (n > 0 && n < 100000) counts.add(n);
+      }
+    };
+
+    // Pass 1: scan uncompressed content (PDF ≤1.4, or uncompressed objects in PDF 1.5+)
+    collectCounts(str);
+
+    // Pass 2: decompress FlateDecode streams.
+    // PDF 1.5+ stores the Pages root object inside compressed object streams (ObjStm),
+    // so the root /Count is only visible after inflation. Skip streams > 2 MB.
+    const streamRe = /\/FlateDecode[\s\S]{0,1024}?stream\r?\n([\s\S]{1,2097152}?)endstream/g;
+    let sm;
+    while ((sm = streamRe.exec(str)) !== null) {
+      const raw = Buffer.from(sm[1], 'latin1');
+      let inflated;
+      try      { inflated = zlib.inflateSync(raw).toString('latin1'); }
+      catch(e) { try { inflated = zlib.inflateRawSync(raw).toString('latin1'); } catch { continue; } }
+      collectCounts(inflated);
+    }
+
+    return counts.size > 0 ? Math.max(...counts) : null;
   } catch {
     return null;
   }
