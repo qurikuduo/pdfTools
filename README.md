@@ -22,7 +22,7 @@ A self-contained Node.js CLI tool that parses **PDF, DOCX, DOC, PPTX, and PPT** 
 
 | Requirement | Notes |
 |---|---|
-| **Node.js** v16 or later | Uses only built-in modules: `http`, `https`, `fs`, `path`, `crypto` |
+| **Node.js** v16 or later | Uses only built-in modules: `http`, `https`, `fs`, `path`, `crypto`, `zlib` |
 | **MinerU API server** | Must be running and reachable on your LAN. Default: `http://192.168.137.135:8000` |
 
 No `npm install` is needed. The script has zero third-party dependencies.
@@ -50,9 +50,9 @@ node ./mineru-client.js raw staging
 ```
 
 This will:
-1. Submit the file(s) to the MinerU API in 5-page chunks
+1. Auto-detect page count; submit as **one task** if ≤1000 pages (single-chunk mode), or in 50-page chunks for larger documents
 2. Poll for completion, retrying automatically on transient errors
-3. Save per-chunk Markdown to `staging/{stem}_result/markdowns/`
+3. Save per-task Markdown to `staging/{stem}_result/markdowns/`
 4. Extract images to `staging/{stem}_result/images/`
 5. Merge all chunks into `staging/{stem}.md` (Obsidian-compatible)
 6. Write a checkpoint to `staging/pdfjobs/{filename}.json`
@@ -98,10 +98,12 @@ All settings are controlled via environment variables. No config file is needed.
 | Variable | Default | Description |
 |---|---|---|
 | `MINERU_API_URL` | `http://192.168.137.135:8000` | MinerU API base URL |
-| `MINERU_CHUNK_SIZE` | `5` | Pages per API request |
+| `MINERU_CHUNK_SIZE` | `50` | Pages per API request (only applies when chunking is used) |
 | `MINERU_LANG` | `ch,en` | Language codes, comma-separated (see below) |
 | `MINERU_BACKEND` | `hybrid-auto-engine` | MinerU parsing backend |
-| `MINERU_MAX_CHUNKS` | `200` | Maximum chunks per PDF (caps at 4000 pages) |
+| `MINERU_MAX_CHUNKS` | `200` | Maximum chunks per PDF (caps at 10000 pages) |
+| `MINERU_SINGLE_CHUNK_THRESHOLD` | `1000` | Documents at or below this page count are sent as a single task, eliminating repeated uploads. Set to `0` to always use chunked mode. |
+| `MINERU_POLL_TIMEOUT_MS` | `1800000` | Per-task timeout in milliseconds (default 30 min). Increase for very large single-chunk documents. |
 | `MINERU_DEBUG` | `0` | Set to `1` to print raw API responses |
 
 **Setting variables on Windows (PowerShell):**
@@ -130,9 +132,8 @@ output_dir/
 ├── {stem}.md                           ← Final merged Markdown (use this)  ({stem} = filename without extension)
 ├── {stem}_result/
 │   ├── markdowns/
-│   │   ├── chunk_0000_0019.md          ← Per-chunk intermediate Markdown
-│   │   ├── chunk_0020_0039.md
-│   │   └── ...
+│   │   ├── chunk_0000_0152.md          ← One file per task (single-chunk: covers all pages)
+│   │   └── ...                         (multiple files only for documents > 1000 pages)
 │   └── images/
 │       ├── chunk0000_figure1.png       ← Extracted images (chunk-prefixed)
 │       └── ...
@@ -240,8 +241,9 @@ ERROR Health check failed: connect ECONNREFUSED 192.168.137.135:8000
 ERROR Task abc123 timed out after 1800s
 ```
 
-- Large chunks on complex pages (dense tables, formulas) can take 5–10 minutes each
-- Reduce `MINERU_CHUNK_SIZE` to 10 or fewer pages
+- Documents ≤1000 pages are sent as a single task; complex content (dense tables, formulas) may exceed the default 30-minute timeout
+- Increase the timeout: `$env:MINERU_POLL_TIMEOUT_MS = "3600000"` (1 hour)
+- Alternatively, lower the single-chunk threshold to fall back to chunked mode: `$env:MINERU_SINGLE_CHUNK_THRESHOLD = "0"`
 - Re-run the command — completed chunks are skipped automatically
 
 ### Corrupt or empty output

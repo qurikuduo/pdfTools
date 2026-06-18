@@ -22,7 +22,7 @@
 
 | 要求 | 说明 |
 |---|---|
-| **Node.js** v16 及以上 | 仅使用内置模块：`http`、`https`、`fs`、`path`、`crypto` |
+| **Node.js** v16 及以上 | 仅使用内置模块：`http`、`https`、`fs`、`path`、`crypto`、`zlib` |
 | **MinerU API 服务器** | 必须在局域网内运行并可访问。默认地址：`http://192.168.137.135:8000` |
 
 无需执行 `npm install`，脚本无任何第三方依赖。
@@ -50,9 +50,9 @@ node ./mineru-client.js raw staging
 ```
 
 执行流程：
-1. 以每块 5 页的方式，将文件提交至 MinerU API
+1. 自动检测页数；若 ≤1000 页则以**单一任务**处理全文（单 chunk 模式），超过阈值则以 50 页为单位分片
 2. 轮询任务状态，遇到临时错误自动重试
-3. 将每块的 Markdown 保存至 `staging/{stem}_result/markdowns/`
+3. 将每个任务的 Markdown 保存至 `staging/{stem}_result/markdowns/`
 4. 提取图片至 `staging/{stem}_result/images/`
 5. 将所有块合并为 `staging/{stem}.md`（Obsidian 兼容格式）
 6. 将断点记录写入 `staging/pdfjobs/{filename}.json`
@@ -98,10 +98,12 @@ node ./mineru-client.js D:\vault\raw D:\vault\staging
 | 变量名 | 默认值 | 说明 |
 |---|---|---|
 | `MINERU_API_URL` | `http://192.168.137.135:8000` | MinerU API 基础地址 |
-| `MINERU_CHUNK_SIZE` | `5` | 每次 API 请求处理的页数 |
+| `MINERU_CHUNK_SIZE` | `50` | 每次 API 请求处理的页数（仅在分片模式下生效） |
 | `MINERU_LANG` | `ch,en` | 语言代码，逗号分隔（见下文） |
 | `MINERU_BACKEND` | `hybrid-auto-engine` | MinerU 解析后端 |
-| `MINERU_MAX_CHUNKS` | `200` | 每个 PDF 最大块数（上限约 4000 页） |
+| `MINERU_MAX_CHUNKS` | `200` | 每个 PDF 最大块数（上限约10000 页） |
+| `MINERU_SINGLE_CHUNK_THRESHOLD` | `1000` | 页数不超过此阈值的文档以单一任务提交，避免重复上传整个文件。设为 `0` 可强制始终使用分片模式。 |
+| `MINERU_POLL_TIMEOUT_MS` | `1800000` | 单个任务的超时时间（毫秒，默认 30 分钟）。处理较大文档时可适当增大。 |
 | `MINERU_DEBUG` | `0` | 设为 `1` 可打印原始 API 响应 |
 
 **Windows 下设置环境变量（PowerShell）：**
@@ -130,9 +132,8 @@ output_dir/
 ├── {stem}.md                           ← 最终合并 Markdown（使用此文件）  ({stem} = 不含扩展名的文件名)
 ├── {stem}_result/
 │   ├── markdowns/
-│   │   ├── chunk_0000_0019.md          ← 每块的中间 Markdown
-│   │   ├── chunk_0020_0039.md
-│   │   └── ...
+│   │   ├── chunk_0000_0152.md          ← 每个任务生成一个文件（单 chunk 模式：覆盖全部页面）
+│   │   └── ...                         （超过 1000 页的文档才会生成多个文件）
 │   └── images/
 │       ├── chunk0000_figure1.png       ← 提取的图片（带块编号前缀）
 │       └── ...
@@ -241,8 +242,9 @@ ERROR Health check failed: connect ECONNREFUSED 192.168.137.135:8000
 ERROR Task abc123 timed out after 1800s
 ```
 
-- 含有大量表格、公式的复杂页面每块可能需要 5–10 分钟
-- 尝试将 `MINERU_CHUNK_SIZE` 减小至 10 页或更少
+- 页数 ≤1000 的文档以单任务提交；内容复杂（大量表格、公式）时可能超过默认 30 分钟超时限制
+- 增大超时时间：`$env:MINERU_POLL_TIMEOUT_MS = "3600000"`（1 小时）
+- 或将阈值调小以回退到分片模式：`$env:MINERU_SINGLE_CHUNK_THRESHOLD = "0"`
 - 直接重新运行命令，已完成的块会自动跳过
 
 ### 输出损坏或为空
